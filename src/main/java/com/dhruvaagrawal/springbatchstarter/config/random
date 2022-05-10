@@ -1,0 +1,117 @@
+package com.dhruvaagrawal.springbatchstarter.config;
+
+import com.dhruvaagrawal.springbatchstarter.entity.Game;
+import com.dhruvaagrawal.springbatchstarter.repository.GameRepository;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.item.data.RepositoryItemWriter;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.LineMapper;
+import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
+import org.springframework.batch.item.file.mapping.DefaultLineMapper;
+import org.springframework.batch.item.file.mapping.FieldSetMapper;
+import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.converter.Converter;
+import org.springframework.core.convert.support.DefaultConversionService;
+import org.springframework.core.io.FileSystemResource;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+@Configuration
+@EnableBatchProcessing
+public class SpringBatchConfig {
+
+    private JobBuilderFactory jobBuilderFactory;
+    private StepBuilderFactory stepBuilderFactory;
+    private GameRepository gameRepository;
+
+    public SpringBatchConfig(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory, GameRepository gameRepository) {
+        this.jobBuilderFactory = jobBuilderFactory;
+        this.stepBuilderFactory = stepBuilderFactory;
+        this.gameRepository = gameRepository;
+    }
+
+    public ConversionService conversionService() {
+        DefaultConversionService conversionService = new DefaultConversionService();
+        DefaultConversionService.addDefaultConverters(conversionService);
+        conversionService.addConverter(new Converter<String, LocalDateTime>() {
+            @Override
+            public LocalDateTime convert(String date) {
+                return LocalDateTime.parse(date, DateTimeFormatter.ISO_DATE_TIME);
+            }
+        });
+        return conversionService;
+    }
+
+
+    @Bean
+    public FieldSetMapper<Game> fieldSetMapper(ConversionService conversionService) {
+        BeanWrapperFieldSetMapper<Game> mapper = new BeanWrapperFieldSetMapper<>();
+        mapper.setConversionService(conversionService);
+        mapper.setTargetType(Game.class);
+        return mapper;
+    }
+
+    @Bean
+    public FlatFileItemReader<Game> reader(FieldSetMapper<Game> fieldSetMapper) {
+        FlatFileItemReader<Game> itemReader = new FlatFileItemReader<>();
+        itemReader.setResource(new FileSystemResource("src/main/resources/games1.csv"));
+        itemReader.setName("csvReader");
+        itemReader.setLinesToSkip(1);
+        itemReader.setLineMapper(lineMapper(fieldSetMapper));
+        return itemReader;
+    }
+
+    private LineMapper<Game> lineMapper(FieldSetMapper<Game> fieldSetMapper) {
+        DefaultLineMapper<Game> lineMapper = new DefaultLineMapper<>();
+        DelimitedLineTokenizer lineTokenizer = new DelimitedLineTokenizer();
+        lineTokenizer.setStrict(false);
+        lineTokenizer.setDelimiter(",");
+        lineTokenizer.setNames("id", "rated", "createdAt", "lastMoveAt", "turns", "victoryStatus", "winner", "incrementCode", "whiteId", "whiteRating", "blackId", "blackRating", "moves", "openingEco", "openingName", "openingPly");
+
+        lineMapper.setLineTokenizer(lineTokenizer);
+        lineMapper.setFieldSetMapper(fieldSetMapper);
+
+        return lineMapper;
+    }
+
+    @Bean
+    public GameProcessor processor() {
+        return new GameProcessor();
+    }
+
+    @Bean
+    public RepositoryItemWriter<Game> writer() {
+        RepositoryItemWriter<Game> writer = new RepositoryItemWriter<>();
+        writer.setRepository(gameRepository);
+        writer.setMethodName("save");
+        return writer;
+    }
+
+    @Bean
+    public Step step1(FieldSetMapper<Game> fieldSetMapper) {
+        return stepBuilderFactory
+                .get("csvStep")
+                .<Game, Game>chunk(10)
+                .reader(reader(fieldSetMapper))
+                .processor(processor())
+                .writer(writer())
+                .build();
+    }
+
+
+    @Bean
+    public Job job(Step step1) {
+        return jobBuilderFactory.get("csvJob")
+                .start(step1)
+                .build();
+    }
+
+}
